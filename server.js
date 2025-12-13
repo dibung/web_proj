@@ -435,8 +435,128 @@ app.post('/api/comments/:comment_id/unlike', async (req,res)=>{
   }catch(err){ res.status(500).json({ error: err.message }); }
 });
 
+
+// =========================
+// 🔐 Auth
+// =========================
+app.post('/api/auth/login', async (req,res)=>{
+  const { email, password } = req.body;
+  const user = await User.findOne({ email });
+  if(!user) return res.status(400).json({ error: '사용자 없음' });
+
+  const ok = await bcrypt.compare(password, user.password);
+  if(!ok) return res.status(400).json({ error: '비밀번호 틀림' });
+
+  res.json({ user_id: user._id, admin: user.admin });
+});
+
+app.post('/api/auth/logout', (req,res)=>{
+  res.json({ message: '로그아웃 완료' });
+});
+
+// =========================
+// 👤 Users 확장
+// =========================
+app.get('/api/users', async (req,res)=>{
+  const users = await User.find().select('-password');
+  res.json(users);
+});
+
+app.patch('/api/users/:user_id/deactivate', async (req,res)=>{
+  const user = await User.findById(req.params.user_id);
+  if(!user) return res.status(404).json({ error: '사용자 없음' });
+
+  user.deleted_at = new Date();
+  await user.save();
+
+  res.json({ message: '계정 비활성화 완료' });
+});
+
+app.get('/api/users/:user_id/orders', async (req,res)=>{
+  const orders = await Order.find({ user_id: req.params.user_id });
+  res.json(orders);
+});
+
+// =========================
+// 🧑‍🎨 Authors
+// =========================
+app.get('/api/authors', async (req,res)=>{
+  const authors = await Author.find();
+  res.json(authors);
+});
+
+app.get('/api/authors/:author_id/books', async (req,res)=>{
+  const books = await Book.find({ author_id: req.params.author_id });
+  res.json(books);
+});
+
+// =========================
+// 📂 Categories
+// =========================
+app.get('/api/categories', async (req,res)=>{
+  const categories = await Category.find();
+  res.json(categories);
+});
+
+app.get('/api/categories/:category_id/books', async (req,res)=>{
+  const books = await Book.find({ category_id: req.params.category_id });
+  res.json(books);
+});
+
+// =========================
+// 📝 Review 좋아요
+// =========================
+app.post('/api/reviews/:review_id/like', async (req,res)=>{
+  const review = await Review.findById(req.params.review_id);
+  if(!review) return res.status(404).json({ error: '리뷰 없음' });
+
+  review.like_count += 1;
+  await review.save();
+
+  res.json({ like_count: review.like_count });
+});
+
+app.post('/api/reviews/:review_id/unlike', async (req,res)=>{
+  const review = await Review.findById(req.params.review_id);
+  if(!review) return res.status(404).json({ error: '리뷰 없음' });
+
+  review.like_count = Math.max(review.like_count - 1, 0);
+  await review.save();
+
+  res.json({ like_count: review.like_count });
+});
+
+// =========================
+// 💬 Comments
+// =========================
+app.post('/api/comments', async (req,res)=>{
+  const comment = new Comment(req.body);
+  await comment.save();
+  res.status(201).json(comment);
+});
+
+app.get('/api/reviews/:review_id/comments', async (req,res)=>{
+  const comments = await Comment.find({ review_id: req.params.review_id });
+  res.json(comments);
+});
+
+// =========================
+// 📊 Stats
+// =========================
+app.get('/api/stats/top-books', async (req,res)=>{
+  const books = await Review.aggregate([
+    { $group: { _id: "$book_id", reviews: { $sum: 1 } } },
+    { $sort: { reviews: -1 } },
+    { $limit: 5 }
+  ]);
+  res.json(books);
+});
+
+
+
 // =========================
 // 🚀 서버 실행
 // =========================
 const PORT = 3000;
 app.listen(PORT, ()=>console.log(`🚀 Server running on http://localhost:${PORT}`));
+  
