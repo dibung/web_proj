@@ -1,49 +1,42 @@
 const db = require('../db');
-const ApiError = require('../errors/ApiError');
-const ERROR = require('../errors/errorCodes');
 
-exports.createReview = async ({ user_id, book_id, title, body }) => {
-  // 유저가 이미 리뷰를 작성했는지 확인
-  const [existing] = await db.query(
-    `SELECT * FROM review WHERE user_id = ? AND book_id = ?`,
-    [user_id, book_id]
-  );
-  if (existing.length > 0) {
-    throw new ApiError(ERROR.DUPLICATE_RESOURCE, { message: '이미 리뷰 작성됨' });
+class ReviewService {
+  // 리뷰 작성
+  static async createReview({ user_id, book_id, title, body }) {
+    const [result] = await db.query(
+      'INSERT INTO review (user_id, book_id, title, body) VALUES (?, ?, ?, ?)',
+      [user_id, book_id, title || null, body || null]
+    );
+    const [review] = await db.query('SELECT * FROM review WHERE id = ?', [result.insertId]);
+    return review[0];
   }
 
-  const [result] = await db.query(
-    `INSERT INTO review (user_id, book_id, title, body, created_at, updated_at) VALUES (?, ?, ?, ?, NOW(), NOW())`,
-    [user_id, book_id, title, body]
-  );
-  return { id: result.insertId, user_id, book_id, title, body };
-};
-
-exports.getReviewsByBook = async (book_id) => {
-  const [rows] = await db.query(
-    `SELECT r.*, u.username FROM review r JOIN user u ON r.user_id = u.id WHERE r.book_id = ? ORDER BY created_at DESC`,
-    [book_id]
-  );
-  return rows;
-};
-
-exports.updateReview = async (id, data) => {
-  const fields = [];
-  const params = [];
-
-  for (const key in data) {
-    fields.push(`${key} = ?`);
-    params.push(data[key]);
+  // 리뷰 조회 (책별)
+  static async getReviewsByBook(book_id) {
+    const [reviews] = await db.query(
+      'SELECT * FROM review WHERE book_id = ? ORDER BY created_at DESC',
+      [book_id]
+    );
+    return reviews;
   }
 
-  params.push(id);
-  await db.query(`UPDATE review SET ${fields.join(', ')}, updated_at = NOW() WHERE id = ?`, params);
+  // 리뷰 좋아요 증가
+  static async likeReview(review_id) {
+    const [result] = await db.query(
+      'UPDATE review SET like_count = like_count + 1 WHERE id = ?',
+      [review_id]
+    );
+    if (result.affectedRows === 0) throw new Error('리뷰를 찾을 수 없습니다.');
+    const [review] = await db.query('SELECT * FROM review WHERE id = ?', [review_id]);
+    return review[0];
+  }
 
-  const [rows] = await db.query(`SELECT * FROM review WHERE id = ?`, [id]);
-  return rows[0];
-};
+  // 리뷰 삭제
+  static async deleteReview(review_id) {
+    const [result] = await db.query('DELETE FROM review WHERE id = ?', [review_id]);
+    if (result.affectedRows === 0) throw new Error('리뷰를 찾을 수 없습니다.');
+    return { review_id };
+  }
+}
 
-exports.deleteReview = async (id) => {
-  await db.query(`UPDATE review SET deleted_at = NOW() WHERE id = ?`, [id]);
-  return { id };
-};
+module.exports = ReviewService;

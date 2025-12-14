@@ -1,55 +1,82 @@
 const db = require('../db');
-const ApiError = require('../errors/ApiError');
-const ERROR = require('../errors/errorCodes');
 
-exports.createOrder = async ({ user_id, items }) => {
-  if (!items || items.length === 0) {
-    throw new ApiError(ERROR.VALIDATION_FAILED, { message: '주문 아이템이 필요합니다.' });
+class OrderService {
+  static async createOrder(userId, items) {
+    const conn = await db.getConnection(); // db.js에서 가져옴
+    try {
+      await conn.beginTransaction();
+
+      const [orderResult] = await conn.query(
+        'INSERT INTO orders (user_id, status) VALUES (?, ?)',
+        [userId, 'pending']
+      );
+      const orderId = orderResult.insertId;
+
+      const orderItemsValues = items.map(i => [orderId, i.book_id, i.quantity]);
+      await conn.query(
+        'INSERT INTO order_item (order_id, book_id, quantity) VALUES ?',
+        [orderItemsValues]
+      );
+
+      await conn.commit();
+      return { order_id: orderId, user_id: userId, status: 'pending' };
+    } catch (err) {
+      await conn.rollback();
+      throw err;
+    } finally {
+      conn.release();
+    }
   }
 
-  // 트랜잭션 시작
-  const conn = await db.getConnection();
-  try {
-    await conn.beginTransaction();
+  static async getOrders({ userId, page = 1, size = 10, sort = 'ordered_at,DESC', status }) {
+    const offset = (page - 1) * size;
+    const [sortField, sortOrder] = sort.split(',');
 
-    const [orderResult] = await conn.query(
-      `INSERT INTO orders (user_id) VALUES (?)`,
-      [user_id]
-    );
-    const order_id = orderResult.insertId;
+    let query = 'SELECT * FROM orders WHERE user_id = ?';
+    const params = [userId];
 
-    for (const item of items) {
-      await conn.query(
-        `INSERT INTO order_item (order_id, book_id, quantity, category_id) VALUES (?, ?, ?, ?)`,
-        [order_id, item.book_id, item.quantity, item.category_id]
-      );
-
-      // 재고 감소
-      await conn.query(
-        `UPDATE book SET quantity = quantity - ? WHERE id = ? AND quantity >= ?`,
-        [item.quantity, item.book_id, item.quantity]
-      );
+    if (status) {
+      query += ' AND status = ?';
+      params.push(status);
     }
 
-    await conn.commit();
-    return { order_id, user_id, items };
-  } catch (err) {
-    await conn.rollback();
-    throw new ApiError(ERROR.DATABASE_ERROR, { details: err.message });
-  } finally {
-    conn.release();
+    query += ` ORDER BY ${sortField} ${sortOrder} LIMIT ? OFFSET ?`;
+    params.push(parseInt(size), offset);
+
+    const [orders] = await db.query(query, params); // db.query 사용
+
+    for (const order of orders) {
+      const [items] = await db.query(
+        `SELECT oi.id as order_item_id, b.id as book_id, b.title, b.price, oi.quantity
+         FROM order_item oi
+         JOIN book b ON oi.book_id = b.id
+         WHERE oi.order_id = ?`,
+        [order.id]
+      );
+      order.items = items;
+    }
+
+    // 전체 카운트
+    let countQuery = 'SELECT COUNT(*) as total FROM orders WHERE user_id = ?';
+    const countParams = [userId];
+    if (status) {
+      countQuery += ' AND status = ?';
+      countParams.push(status);
+    }
+    const [countResult] = await db.query(countQuery, countParams);
+    const totalElements = countResult[0].total;
+
+    return {
+      content: orders,
+      page: parseInt(page),
+      size: parseInt(size),
+      totalElements,
+      totalPages: Math.ceil(totalElements / size),
+      sort: `${sortField},${sortOrder}`
+    };
   }
-};
 
-exports.getOrdersByUser = async (user_id) => {
-  const [orders] = await db.query(
-    `SELECT * FROM orders WHERE user_id = ? ORDER BY ordered_at DESC`,
-    [user_id]
-  );
-  return orders;
-};
+  // updateOrderStatus / deleteOrder도 동일하게 db.query 사용
+}
 
-exports.getOrderById = async (id) => {
-  const [orders] = await db.query(`SELECT * FROM orders WHERE id = ?`, [id]);
-  return orders[0];
-};
+module.exports = OrderService;

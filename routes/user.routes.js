@@ -1,12 +1,15 @@
 const express = require('express');
 const router = express.Router();
 const userController = require('../controllers/user.controller');
-const authMiddleware = require('../middlewares/authMiddleware'); // JWT 검증
+const { authenticate } = require('../middlewares/auth');
 
+// 회원가입
 router.post('/', userController.createUser);
-router.get('/', authMiddleware, userController.getUsers);
-router.get('/:id', authMiddleware, userController.getUser);
-router.patch('/:id', authMiddleware, userController.updateUser);
-router.patch('/:id/deactivate', authMiddleware, userController.deactivateUser);
+
+// 사용자 삭제
+router.delete('/:id', authenticate, userController.deleteUser);
+
+// 로그인 (토큰 생성)
+router.post('/login', userController.login);
 
 module.exports = router;

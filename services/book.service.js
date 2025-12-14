@@ -1,78 +1,159 @@
-const db = require('../db');
-const { parsePagination } = require('../utils/pagination');
-const ApiError = require('../errors/ApiError');
-const ERROR = require('../errors/errorCodes');
+// src/services/book.service.js
+const pool = require('../db');
 
-exports.getBooks = async (query) => {
-  const { page, size, sortField, sortDir } = parsePagination(query);
-  const offset = page * size;
+/**
+ * 책 생성
+ * @param {Object} bookData
+ */
+async function createBook(bookData) {
+  const {
+    title,
+    author_id,
+    category_id,
+    price,
+    quantity,
+    publisher,
+    cover_image_url
+  } = bookData;
 
-  const { keyword, category, author, priceFrom, priceTo, dateFrom, dateTo } = query;
+  const [result] = await pool.query(
+    `INSERT INTO books
+      (title, author_id, category_id, price, quantity, publisher, cover_image_url)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [title, author_id, category_id, price, quantity, publisher, cover_image_url]
+  );
 
-  // WHERE 절 초기화
-  let where = 'WHERE 1=1';
+  // 생성된 책 ID 반환
+  const [rows] = await pool.query('SELECT * FROM books WHERE id = ?', [result.insertId]);
+  return rows[0];
+}
+
+/**
+ * 책 조회 (단건)
+ * @param {number} bookId
+ */
+async function getBookById(bookId) {
+  const [rows] = await pool.query('SELECT * FROM books WHERE id = ?', [bookId]);
+  return rows[0];
+}
+
+/**
+ * 책 목록 조회 + 검색/정렬/페이지네이션
+ * @param {Object} options
+ *   - page: 페이지 (기본 1)
+ *   - size: 페이지 크기 (기본 10)
+ *   - keyword: 제목 검색
+ *   - category_id: 카테고리 필터
+ *   - author_id: 작가 필터
+ *   - sort: 'price,DESC' 또는 'title,ASC' 등
+ */
+async function getBooks(options = {}) {
+  let { page = 1, size = 10, keyword, category_id, author_id, sort } = options;
+  page = parseInt(page);
+  size = parseInt(size);
+
+  const offset = (page - 1) * size;
+
+  // WHERE 절 동적 생성
+  const conditions = [];
   const params = [];
 
-  // 검색 필터
   if (keyword) {
-    where += ' AND book.title LIKE ?';
+    conditions.push('title LIKE ?');
     params.push(`%${keyword}%`);
   }
 
-  if (category) {
-    where += ' AND category.id = ?';
-    params.push(category);
+  if (category_id) {
+    conditions.push('category_id = ?');
+    params.push(category_id);
   }
 
-  if (author) {
-    where += ' AND author.id = ?';
-    params.push(author);
+  if (author_id) {
+    conditions.push('author_id = ?');
+    params.push(author_id);
   }
 
-  if (priceFrom != null && priceTo != null) {
-    where += ' AND book.price BETWEEN ? AND ?';
-    params.push(priceFrom, priceTo);
+  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  // 정렬
+  let orderClause = '';
+  if (sort) {
+    const [field, direction] = sort.split(',');
+    const dir = direction && direction.toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
+    const allowedFields = ['title', 'price', 'published_at', 'quantity'];
+    if (allowedFields.includes(field)) {
+      orderClause = `ORDER BY ${field} ${dir}`;
+    }
+  } else {
+    orderClause = 'ORDER BY published_at DESC';
   }
 
-  if (dateFrom && dateTo) {
-    where += ' AND book.published_at BETWEEN ? AND ?';
-    params.push(dateFrom, dateTo);
+  // 총 개수
+  const [countResult] = await pool.query(
+    `SELECT COUNT(*) as total FROM books ${whereClause}`,
+    params
+  );
+  const totalElements = countResult[0].total;
+  const totalPages = Math.ceil(totalElements / size);
+
+  // 데이터 조회
+  const [rows] = await pool.query(
+    `SELECT * FROM books ${whereClause} ${orderClause} LIMIT ? OFFSET ?`,
+    [...params, size, offset]
+  );
+
+  return {
+    content: rows,
+    page,
+    size,
+    totalElements,
+    totalPages,
+    sort: orderClause.replace('ORDER BY ', '')
+  };
+}
+
+/**
+ * 책 정보 수정
+ * @param {number} bookId
+ * @param {Object} updateData
+ */
+async function updateBook(bookId, updateData) {
+  const fields = [];
+  const params = [];
+
+  for (const [key, value] of Object.entries(updateData)) {
+    fields.push(`${key} = ?`);
+    params.push(value);
   }
 
-  try {
-    // 총 개수 조회
-    const [[count]] = await db.query(
-      `SELECT COUNT(*) AS total
-       FROM book
-       JOIN category ON book.category_id = category.id
-       JOIN author ON book.author_id = author.id
-       ${where}`,
-      params
-    );
+  if (fields.length === 0) return getBookById(bookId);
 
-    // 실제 데이터 조회
-    const [rows] = await db.query(
-      `SELECT book.id, book.title, author.name AS author, category.category_name AS category,
-              book.price, book.quantity, book.publisher, book.published_at, book.cover_image_url
-       FROM book
-       JOIN category ON book.category_id = category.id
-       JOIN author ON book.author_id = author.id
-       ${where}
-       ORDER BY ${sortField} ${sortDir}
-       LIMIT ? OFFSET ?`,
-      [...params, size, offset]
-    );
+  params.push(bookId);
 
-    return {
-      content: rows,
-      page,
-      size,
-      totalElements: count.total,
-      totalPages: Math.ceil(count.total / size),
-      sort: `${sortField},${sortDir}`,
-    };
-  } catch (err) {
-    // DB 오류 시 표준 에러 반환
-    throw new ApiError(ERROR.DATABASE_ERROR, { details: err.message });
-  }
+  await pool.query(
+    `UPDATE books SET ${fields.join(', ')} WHERE id = ?`,
+    params
+  );
+
+  return getBookById(bookId);
+}
+
+/**
+ * 책 삭제
+ * @param {number} bookId
+ */
+async function deleteBook(bookId) {
+  const [rows] = await pool.query('SELECT * FROM books WHERE id = ?', [bookId]);
+  if (!rows[0]) return null;
+
+  await pool.query('DELETE FROM books WHERE id = ?', [bookId]);
+  return rows[0];
+}
+
+module.exports = {
+  createBook,
+  getBookById,
+  getBooks,
+  updateBook,
+  deleteBook
 };

@@ -1,42 +1,44 @@
-const reviewService = require('../services/review.service');
-const ApiError = require('../errors/ApiError');
-const ERROR = require('../errors/errorCodes');
+const ReviewService = require('../services/review.service');
 
-exports.createReview = async (req, res, next) => {
-  try {
-    const review = await reviewService.createReview({
-      user_id: req.user.id,
-      ...req.body
-    });
-    res.status(201).json(review);
-  } catch (err) {
-    next(err);
+class ReviewController {
+  static async createReview(req, res, next) {
+    try {
+      const review = await ReviewService.createReview(req.body);
+      res.status(201).json({ message: '리뷰 작성 완료', review });
+    } catch (err) {
+      next(err);
+    }
   }
-};
 
-exports.getReviews = async (req, res, next) => {
-  try {
-    const reviews = await reviewService.getReviewsByBook(req.params.book_id);
-    res.json(reviews);
-  } catch (err) {
-    next(err);
+  static async getReviewsByBook(req, res, next) {
+    try {
+      const { book_id } = req.params;
+      const reviews = await ReviewService.getReviewsByBook(book_id);
+      res.status(200).json(reviews);
+    } catch (err) {
+      next(err);
+    }
   }
-};
 
-exports.updateReview = async (req, res, next) => {
-  try {
-    const updated = await reviewService.updateReview(req.params.id, req.body);
-    res.json(updated);
-  } catch (err) {
-    next(err);
+  static async likeReview(req, res, next) {
+    try {
+      const { review_id } = req.params;
+      const review = await ReviewService.likeReview(review_id);
+      res.status(200).json({ message: '리뷰 좋아요 완료', review });
+    } catch (err) {
+      next(err);
+    }
   }
-};
 
-exports.deleteReview = async (req, res, next) => {
-  try {
-    const result = await reviewService.deleteReview(req.params.id);
-    res.json(result);
-  } catch (err) {
-    next(err);
+  static async deleteReview(req, res, next) {
+    try {
+      const { review_id } = req.params;
+      const result = await ReviewService.deleteReview(review_id);
+      res.status(200).json({ message: '리뷰 삭제 완료', result });
+    } catch (err) {
+      next(err);
+    }
   }
-};
+}
+
+module.exports = ReviewController;

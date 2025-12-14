@@ -1,55 +1,82 @@
-const userService = require('../services/user.service');
+const pool = require('../db');
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
 const ApiError = require('../errors/ApiError');
-const ERROR = require('../errors/errorCodes');
 
-exports.createUser = async (req, res, next) => {
+const JWT_SECRET = process.env.JWT_SECRET || 'secret_key';
+
+// 회원가입
+const createUser = async (req, res, next) => {
   try {
-    const { email, password, username, admin } = req.body;
-
+    const { email, password, username } = req.body;
     if (!email || !password || !username) {
-      return next(new ApiError(ERROR.VALIDATION_FAILED, { message: '필수 값 누락' }));
+      throw new ApiError(400, 'VALIDATION_FAILED', '모든 필수 항목을 입력해야 합니다.');
     }
 
-    const user = await userService.createUser({ email, password, username, admin });
-    res.status(201).json(user);
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const [result] = await pool.query(
+      'INSERT INTO users (email, password, username) VALUES (?, ?, ?)',
+      [email, hashedPassword, username]
+    );
+
+    const [user] = await pool.query('SELECT id, email, username, created_at, updated_at FROM users WHERE id = ?', [result.insertId]);
+
+    res.status(201).json({
+      message: '회원가입 성공',
+      user: user[0]
+    });
   } catch (err) {
     next(err);
   }
 };
 
-exports.getUser = async (req, res, next) => {
+// 사용자 삭제
+const deleteUser = async (req, res, next) => {
   try {
-    const user = await userService.getUserById(req.params.id);
-    if (!user) return next(new ApiError(ERROR.RESOURCE_NOT_FOUND));
-    res.json(user);
+    const userId = req.params.id;
+    await pool.query('DELETE FROM users WHERE id = ?', [userId]);
+
+    res.json({
+      message: '사용자 삭제',
+      user_id: userId
+    });
   } catch (err) {
     next(err);
   }
 };
 
-exports.getUsers = async (req, res, next) => {
+// 로그인
+const login = async (req, res, next) => {
   try {
-    const users = await userService.getUsers();
-    res.json(users);
+    const { email, password } = req.body;
+    if (!email || !password) throw new ApiError(400, 'VALIDATION_FAILED', '이메일과 비밀번호를 입력해야 합니다.');
+
+    const [rows] = await pool.query('SELECT * FROM users WHERE email = ?', [email]);
+    if (rows.length === 0) throw new ApiError(401, 'UNAUTHORIZED', '사용자를 찾을 수 없습니다.');
+
+    const user = rows[0];
+    const match = await bcrypt.compare(password, user.password);
+    if (!match) throw new ApiError(401, 'UNAUTHORIZED', '비밀번호가 올바르지 않습니다.');
+
+    const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '1h' });
+
+    res.json({
+      message: '로그인 성공',
+      token,
+      user: {
+        _id: user.id,
+        name: user.username,
+        email: user.email
+      }
+    });
   } catch (err) {
     next(err);
   }
 };
 
-exports.updateUser = async (req, res, next) => {
-  try {
-    const updated = await userService.updateUser(req.params.id, req.body);
-    res.json(updated);
-  } catch (err) {
-    next(err);
-  }
-};
-
-exports.deactivateUser = async (req, res, next) => {
-  try {
-    const result = await userService.deactivateUser(req.params.id);
-    res.json(result);
-  } catch (err) {
-    next(err);
-  }
+module.exports = {
+  createUser,
+  deleteUser,
+  login
 };

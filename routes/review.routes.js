@@ -1,11 +1,17 @@
 const express = require('express');
 const router = express.Router();
-const reviewController = require('../controllers/review.controller');
-const authMiddleware = require('../middlewares/authMiddleware');
+const ReviewController = require('../controllers/review.controller');
 
-router.post('/', authMiddleware, reviewController.createReview);
-router.get('/book/:book_id', reviewController.getReviews);
-router.patch('/:id', authMiddleware, reviewController.updateReview);
-router.delete('/:id', authMiddleware, reviewController.deleteReview);
+// 리뷰 작성
+router.post('/', ReviewController.createReview);
+
+// 책별 리뷰 조회
+router.get('/book/:book_id', ReviewController.getReviewsByBook);
+
+// 리뷰 좋아요
+router.post('/:review_id/like', ReviewController.likeReview);
+
+// 리뷰 삭제
+router.delete('/:review_id', ReviewController.deleteReview);
 
 module.exports = router;
